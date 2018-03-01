@@ -3,12 +3,18 @@ import json
 import os
 import re
 from pathlib import Path
-from collections import defaultdict
-import copy
+from collections import namedtuple, defaultdict, deque
 import tqdm
 
 
 re_slack_link = re.compile(r'(?P<all><(?P<id>[^\|]*)(\|(?P<title>[^>]*))?>)')
+
+
+Thread = namedtuple('Tread', ['channel', 'channel_name',
+                              'user', 'ts', 'text', 'reactions',
+                              'sub_user', 'sub_ts', 'sub_text', 'sub_reactions',
+                              'msg_counter'
+                              ])
 
 def _read_json_dict(filename, key='id'):
     with open(filename) as fin:
@@ -20,22 +26,23 @@ def _read_json_dict(filename, key='id'):
     return json_dict
 
 
-EOU_TOKEN = "\n"
-REACTS_THRESHOLD = 2
+EOU_TOKEN = ""
+REACTS_THRESHOLD = 1
 KEEP_N_LAST_MSG = 3
 
 
 class SlackLoader2:
 
     def __init__(self, export_path, exclude_channels=(), only_channels=(), start_date=None, end_date=None,
-                 is_sorted=True):
-        self.export_path = export_path
-        self.exclude_channels = exclude_channels
-        self.only_channels = only_channels
-        self.is_sorted = is_sorted
-        self.threads_index = None
-        self.threads = None
-        self.text_messages = None
+                 is_sorted=True, thread_window_size=KEEP_N_LAST_MSG):
+        self.export_path            = export_path
+        self.exclude_channels       = exclude_channels
+        self.only_channels          = only_channels
+        self.is_sorted              = is_sorted
+        self.thread_window_size     = thread_window_size
+        self.threads_index          = None
+        self.threads                = None
+        self.text_messages          = None
         if start_date:
             self.start_date = (start_date - datetime.datetime(1970, 1, 1)).total_seconds()
         else:
@@ -137,7 +144,7 @@ class SlackLoader2:
                         if self.filtered_record(record):
                             skipped_counter += 1
                             continue
-                        messages.append(SlackLoader2.parse_record(record))
+                        messages.append(SlackLoader2.parse_record(record, channel_id, channel))
         if is_sorted:
             messages = sorted(messages, key=lambda x: x['ts'])
         print("{} messages was skipped.".format(skipped_counter))
@@ -162,52 +169,50 @@ class SlackLoader2:
             msg = self.messages[i]
             if "text" not in msg:
                 continue
-            thread = {}
 
             key = (msg["channel"], msg["ts"])
-            thread["key"] = key
+            msg_counter = 1
+            top = Thread(
+                channel     = msg.get('channel'),
+                channel_name = msg.get('channel_name'),
+                text        = SlackLoader2.get_text(msg),
+                user        = msg.get('user'),
+                ts          = msg.get('ts'),
+                reactions   = SlackLoader2.get_reactions(msg),
+                msg_counter  = msg_counter,
+                sub_user=None, sub_ts=None, sub_text=None, sub_reactions=None
+            )
 
-            text = SlackLoader2.get_text(msg)
-            if text:
-                thread["text"] = " ".join([text, EOU_TOKEN])
-            else:
-                thread["text"] = ""
-                print("Empty text {}".format(msg))
-
-            thread["msg_counter"] = 1
-            last_ts = datetime.datetime.fromtimestamp(msg['ts'])
-            thread["start_ts"] = last_ts
-            thread["channel_name"] = msg["channel_name"]
-
-            #Save thread
-            if ("reactions_" in msg) and (msg["reactions_"]):
-                thread["reactions_"] = msg["reactions_"]
-                self.threads.append(copy.deepcopy(thread))
+            self.threads.append(top)
 
             processed_ids.append(i)
+            deque_window = {
+                'sub_user': deque(maxlen=self.thread_window_size),
+                'sub_ts': deque(maxlen=self.thread_window_size),
+                'sub_text': deque(maxlen=self.thread_window_size),
+                'sub_reactions': deque(maxlen=self.thread_window_size)
+            }
+
             for submsg_index in self.threads_index[self.key_str(key)]:
                 if submsg_index in processed_ids:
                     continue
                 submsg = self.messages[submsg_index]
-                submsg_ts = datetime.datetime.fromtimestamp(submsg['ts'])
-                if submsg_ts < last_ts:
-                    raise Exception("""Wrong order in timestamps. submsg_ts {}\n\n
-                                     last_msg {}\n\n submsg {}\n\n msg {}"""
-                                    .format(submsg_ts, last_ts, submsg, msg))
-                last_ts = submsg_ts
-                thread["msg_counter"] += 1
-                subtext = self.get_text(submsg)
-                if subtext:
-                    thread["text"] += " ".join([subtext, EOU_TOKEN])
-                else:
-                    print("Empty text {}".format(submsg))
-                #TODO rip attachment
-                #Save thread
-                if "reactions_" in submsg and submsg["reactions_"]:
-                    thread["reactions_"] = submsg["reactions_"]
-                    thread["end_ts"] = submsg_ts
-                    thread["last_msg"] = subtext
-                    self.threads.append(copy.deepcopy(thread))
+                deque_window["sub_user"].append(submsg.get("user"))
+                deque_window["sub_ts"].append(submsg.get("ts"))
+                deque_window["sub_text"].append(self.get_text(submsg))
+                deque_window["sub_reactions"].append(self.get_reactions(submsg))
+                msg_counter += 1
+                #create Thread tuple
+                self.threads.append(
+                    Thread(channel=top.channel, channel_name=top.channel_name,
+                       user=top.user, ts=top.ts, text=top.text, reactions=top.reactions,
+                       sub_user=list(deque_window["sub_user"]),
+                       sub_ts=list(deque_window["sub_ts"]),
+                       sub_text=list(deque_window["sub_text"]),
+                       sub_reactions=list(deque_window["sub_reactions"]),
+                       msg_counter=msg_counter
+                       )
+                )
                 processed_ids.append(submsg_index)
 
     def process_threads(self):
