@@ -1,0 +1,13 @@
+input/
+__pycache__
+.ipynb_checkpoints
+*.pyc
+*.swp
+*.swo
+notebooks/*.csv
+notebooks/*.hdf5
+.venv
+.idea
+out
+*.csv
+3dparty/
