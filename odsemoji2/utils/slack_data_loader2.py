@@ -10,7 +10,7 @@ import tqdm
 re_slack_link = re.compile(r'(?P<all><(?P<id>[^\|]*)(\|(?P<title>[^>]*))?>)')
 
 
-Thread = namedtuple('Tread', ['channel', 'channel_name',
+Thread = namedtuple('Tread', ['channel', 'channel_name', 'reply_count',
                               'user', 'ts', 'text', 'reactions',
                               'sub_user', 'sub_ts', 'sub_text', 'sub_reactions',
                               'msg_counter'
@@ -111,7 +111,7 @@ class SlackLoader2:
         return record
 
     def filtered_record(self, record):
-        if record.get('subtype') == 'bot_message':
+        if record.get('subtype') in ['bot_message', 'channel_join', 'channel_leave']:
             return True
         if 'ts' in record:
             if self.start_date and float(record['ts']) < self.start_date:
@@ -173,13 +173,14 @@ class SlackLoader2:
             key = (msg["channel"], msg["ts"])
             msg_counter = 1
             top = Thread(
-                channel     = msg.get('channel'),
-                channel_name = msg.get('channel_name'),
-                text        = SlackLoader2.get_text(msg),
-                user        = msg.get('user'),
+                channel     = str(msg.get('channel')),
+                channel_name = str(msg.get('channel_name')),
+                text        = str(SlackLoader2.get_text(msg)),
+                user        = str(msg.get('user')),
                 ts          = msg.get('ts'),
                 reactions   = SlackLoader2.get_reactions(msg),
-                msg_counter  = msg_counter,
+                msg_counter  = int(msg_counter),
+                reply_count  = msg.get('reply_count'),
                 sub_user=None, sub_ts=None, sub_text=None, sub_reactions=None
             )
 
@@ -204,13 +205,14 @@ class SlackLoader2:
                 msg_counter += 1
                 #create Thread tuple
                 self.threads.append(
-                    Thread(channel=top.channel, channel_name=top.channel_name,
-                       user=top.user, ts=top.ts, text=top.text, reactions=top.reactions,
+                    Thread(channel=str(top.channel), channel_name=str(top.channel_name),
+                       user=str(top.user), ts=top.ts, text=str(top.text), reactions=top.reactions,
                        sub_user=list(deque_window["sub_user"]),
                        sub_ts=list(deque_window["sub_ts"]),
                        sub_text=list(deque_window["sub_text"]),
                        sub_reactions=list(deque_window["sub_reactions"]),
-                       msg_counter=msg_counter
+                       reply_count  = msg.get('reply_count'),
+                       msg_counter=int(msg_counter)
                        )
                 )
                 processed_ids.append(submsg_index)

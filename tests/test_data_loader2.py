@@ -37,7 +37,7 @@ class DataLoaderTest(unittest.TestCase):
         #assert rec["text"] == MSG_TEXT
 
     def testThreadsLoad(self):
-        sl = SlackLoader2(BASE_DIR, exclude_channels=[], only_channels=["career"])
+        sl = SlackLoader2(BASE_DIR, exclude_channels=[], only_channels=["_call_4_collaboration"])
         sl.load_messages()
         sl.process_threads()
         print(len(sl.threads))
