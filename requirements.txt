@@ -11,7 +11,7 @@ Cython==0.27.3
 decorator==4.2.1
 docutils==0.14
 gensim==3.4.0
-html5lib==0.9999999
+html5lib==0.99999999
 idna==2.6
 imbalanced-learn==0.3.3
 ipython==6.2.1
